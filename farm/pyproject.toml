@@ -1,0 +1,29 @@
+[project]
+name = "farm"
+version = "0.1.0"
+description = "Phone farm: TikTok + Twitter scraping, local preprocessing, LLM synthesis."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "uiautomator2>=3.2",
+    "adbutils>=2.8",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "structlog>=24.4",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+# Add later once capture works: redis, rq, duckdb, faster-whisper, paddleocr, imagehash, datasketch, anthropic, httpx
+dev = [
+    "pytest>=8.3",
+    "mypy>=1.13",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
