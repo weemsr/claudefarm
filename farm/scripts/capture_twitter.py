@@ -39,6 +39,9 @@ ROW_INNER_ID = f"{PKG}:id/row"
 BODY_ID = f"{PKG}:id/tweet_content_text"
 HEADER_ID = f"{PKG}:id/tweet_header"
 TIMELINE_LIST_ID = "android:id/list"
+# Order matters: tweet_text is the focal-tweet body on the detail page (no truncation).
+# tweet_content_text is the timeline-style body and kept as a fallback.
+DETAIL_BODY_IDS = (f"{PKG}:id/tweet_text", BODY_ID)
 
 COUNTS_RE = re.compile(
     r"(?P<replies>\d+)\s+replies\.\s+"
@@ -255,13 +258,23 @@ def expand_truncated(tweet: dict, tmpdir: Path, debug_dir: Path | None) -> str |
     full = ""
     try:
         tree = ET.parse(detail_xml)
-        for container in tree.iter("node"):
-            if container.get("resource-id") == BODY_ID:
-                for inner in container.iter("node"):
-                    text = inner.get("text") or ""
-                    if text:
-                        full = text
-                        break
+        for body_id in DETAIL_BODY_IDS:
+            for container in tree.iter("node"):
+                if container.get("resource-id") != body_id:
+                    continue
+                # Some bodies put text on the container itself, others on a
+                # nested View. Check both.
+                text = container.get("text") or ""
+                if not text:
+                    for inner in container.iter("node"):
+                        inner_text = inner.get("text") or ""
+                        if inner_text:
+                            text = inner_text
+                            break
+                if text:
+                    full = text
+                    break
+            if full:
                 break
     except ET.ParseError as e:
         log(f"  expand: detail parse error: {e}")
