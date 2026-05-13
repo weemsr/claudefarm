@@ -229,6 +229,54 @@ def timeline_visible(xml_path: Path) -> bool:
     return any(n.get("resource-id") == TIMELINE_LIST_ID for n in tree.iter("node"))
 
 
+def _extract_detail_body(detail_xml: Path, truncated_body: str) -> tuple[str, str]:
+    """Pull the full tweet body out of a detail-page UI dump.
+
+    Returns ``(body, source)`` where source is a short tag describing which
+    path matched (for diagnostic logging). Body is empty if nothing matched.
+
+    Strategy:
+      1. Look for a container with one of DETAIL_BODY_IDS. Check the
+         container's own text attribute first, then any nested child.
+      2. Fallback: scan every node and pick the longest text that starts
+         with the first 40 chars of the truncated body. Survives X UI
+         changes and handles media-card tweets where tweet_text exposes
+         no text to uiautomator (custom View / Compose rendering).
+    """
+    try:
+        tree = ET.parse(detail_xml)
+    except ET.ParseError:
+        return "", "parse_error"
+
+    for body_id in DETAIL_BODY_IDS:
+        short_id = body_id.split("/")[-1]
+        for container in tree.iter("node"):
+            if container.get("resource-id") != body_id:
+                continue
+            text = container.get("text") or ""
+            if not text:
+                for inner in container.iter("node"):
+                    inner_text = inner.get("text") or ""
+                    if inner_text:
+                        text = inner_text
+                        break
+            if text:
+                return text, short_id
+
+    if truncated_body:
+        prefix = truncated_body[:40].strip()
+        if prefix:
+            candidates: list[str] = []
+            for n in tree.iter("node"):
+                text = n.get("text") or ""
+                if text.startswith(prefix) and len(text) > len(truncated_body):
+                    candidates.append(text)
+            if candidates:
+                return max(candidates, key=len), "prefix_match"
+
+    return "", "no_match"
+
+
 def expand_truncated(tweet: dict, tmpdir: Path, debug_dir: Path | None) -> str | None:
     """Tap the tweet header to open its detail view, grab full body, press back.
 
@@ -255,29 +303,9 @@ def expand_truncated(tweet: dict, tmpdir: Path, debug_dir: Path | None) -> str |
         time.sleep(random.uniform(1.0, 1.6))
         return None
 
-    full = ""
-    try:
-        tree = ET.parse(detail_xml)
-        for body_id in DETAIL_BODY_IDS:
-            for container in tree.iter("node"):
-                if container.get("resource-id") != body_id:
-                    continue
-                # Some bodies put text on the container itself, others on a
-                # nested View. Check both.
-                text = container.get("text") or ""
-                if not text:
-                    for inner in container.iter("node"):
-                        inner_text = inner.get("text") or ""
-                        if inner_text:
-                            text = inner_text
-                            break
-                if text:
-                    full = text
-                    break
-            if full:
-                break
-    except ET.ParseError as e:
-        log(f"  expand: detail parse error: {e}")
+    full, source = _extract_detail_body(detail_xml, tweet["body"])
+    if full:
+        log(f"  expand: matched via {source}")
 
     press_back()
     time.sleep(random.uniform(1.2, 1.9))
