@@ -226,20 +226,24 @@ def timeline_visible(xml_path: Path) -> bool:
     return any(n.get("resource-id") == TIMELINE_LIST_ID for n in tree.iter("node"))
 
 
-def expand_truncated(tweet: dict, tmpdir: Path) -> str | None:
+def expand_truncated(tweet: dict, tmpdir: Path, debug_dir: Path | None) -> str | None:
     """Tap the tweet header to open its detail view, grab full body, press back.
 
-    Returns the full body text on success, None on failure.
+    Returns the full body text on success, None on failure. On failure, the
+    detail UI dump is preserved under debug_dir for inspection if provided.
     """
     target = tweet.get("header_bounds") or tweet.get("bounds")
     if not target:
         return None
-    cx = (target[0] + target[2]) // 2
+    # Tap a bit right of header center; left side is avatar / display-name link,
+    # both of which navigate to the user's profile instead of the tweet detail.
+    cx = int(target[0] + 0.66 * (target[2] - target[0]))
     cy = (target[1] + target[3]) // 2
 
     log(f"  expanding @{tweet['handle']} via tap({cx},{cy})")
     tap(cx, cy)
-    time.sleep(random.uniform(1.8, 2.6))
+    # Slightly longer initial wait; video tweets render slowly on the detail page.
+    time.sleep(random.uniform(2.4, 3.4))
 
     detail_xml = tmpdir / "detail.xml"
     if not dump_ui(detail_xml):
@@ -251,7 +255,6 @@ def expand_truncated(tweet: dict, tmpdir: Path) -> str | None:
     full = ""
     try:
         tree = ET.parse(detail_xml)
-        # The first tweet_content_text in the detail view is the focal tweet's body.
         for container in tree.iter("node"):
             if container.get("resource-id") == BODY_ID:
                 for inner in container.iter("node"):
@@ -266,7 +269,6 @@ def expand_truncated(tweet: dict, tmpdir: Path) -> str | None:
     press_back()
     time.sleep(random.uniform(1.2, 1.9))
 
-    # If we accidentally double-backed out of the app, recover.
     recovery_xml = tmpdir / "recovery.xml"
     if dump_ui(recovery_xml) and not timeline_visible(recovery_xml):
         log("  expand: timeline missing after back, relaunching X")
@@ -274,6 +276,16 @@ def expand_truncated(tweet: dict, tmpdir: Path) -> str | None:
 
     if full and full != tweet["body"]:
         return full
+
+    # Failure path: keep the detail dump for diagnosis.
+    if debug_dir is not None:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"expand_fail_{tweet['handle']}_{tweet['id']}.xml"
+        try:
+            (debug_dir / fname).write_text(detail_xml.read_text())
+            log(f"  expand failed; saved detail dump -> {fname}")
+        except OSError as e:
+            log(f"  expand failed; could not save detail dump: {e}")
     return None
 
 
@@ -312,6 +324,7 @@ def main() -> None:
     prefix = f"{serial}_{stamp}"
     manifest_path = day_dir / f"{prefix}_run.json"
 
+    debug_dir = day_dir / "debug"
     log(f"device={serial}  output={day_dir}")
     log(f"limits: max_tweets={args.max_tweets} max_pages={args.max_pages} "
         f"max_seconds={args.max_seconds} expand_rate={args.expand_rate}")
@@ -369,7 +382,7 @@ def main() -> None:
                     and random.random() < args.expand_rate
                 ):
                     expansion_attempts += 1
-                    full = expand_truncated(t, tmpdir)
+                    full = expand_truncated(t, tmpdir, debug_dir)
                     if full:
                         t["body"] = full
                         t["truncated"] = False
