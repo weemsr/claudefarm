@@ -42,6 +42,10 @@ TIMELINE_LIST_ID = "android:id/list"
 # Order matters: tweet_text is the focal-tweet body on the detail page (no truncation).
 # tweet_content_text is the timeline-style body and kept as a fallback.
 DETAIL_BODY_IDS = (f"{PKG}:id/tweet_text", BODY_ID)
+# Markers used to detect tweets that embed video. Twitter project scrapes text;
+# video tweets belong on the TikTok pipeline, and they also tend to expose their
+# body through custom Views that uiautomator can't introspect.
+VIDEO_MARKER_IDS = (f"{PKG}:id/video_container", f"{PKG}:id/video_player_view")
 
 COUNTS_RE = re.compile(
     r"(?P<replies>\d+)\s+replies\.\s+"
@@ -174,6 +178,9 @@ def parse_tweet(outer: ET.Element) -> dict | None:
     raw_body = first_text_under(outer, BODY_ID)
     truncated = raw_body.endswith(SHOW_MORE_SUFFIX)
     body = raw_body[: -len(SHOW_MORE_SUFFIX)].rstrip() if truncated else raw_body
+    has_video = any(
+        n.get("resource-id") in VIDEO_MARKER_IDS for n in outer.iter("node")
+    )
 
     counts = COUNTS_RE.search(desc)
     author = AUTHOR_RE.match(desc)
@@ -188,6 +195,7 @@ def parse_tweet(outer: ET.Element) -> dict | None:
         "body": body,
         "truncated": truncated,
         "expanded": False,
+        "has_video": has_video,
         "age": age.group(1) if age else None,
         "replies": int(counts.group("replies")) if counts else None,
         "reposts": int(counts.group("reposts")) if counts else None,
@@ -351,6 +359,9 @@ def parse_args() -> argparse.Namespace:
                    help="Skip launching X (assume already foreground).")
     p.add_argument("--keep-pages", action="store_true",
                    help="Keep per-page screenshots + UI dumps (default: only first + last).")
+    p.add_argument("--include-video", action="store_true",
+                   help="Include video tweets in output (default: skip them; videos "
+                        "belong on the TikTok pipeline).")
     return p.parse_args()
 
 
@@ -377,6 +388,7 @@ def main() -> None:
     page_files: list[dict] = []
     expansion_attempts = 0
     expansion_successes = 0
+    video_skipped = 0
     started_at = time.monotonic()
     empty_pages = 0
     page_num = 0
@@ -414,8 +426,13 @@ def main() -> None:
 
             page_tweets = parse_dump(xml_path)
             new_in_page = 0
+            page_video_skipped = 0
             for t in page_tweets:
                 if t["id"] in seen:
+                    continue
+                if t["has_video"] and not args.include_video:
+                    video_skipped += 1
+                    page_video_skipped += 1
                     continue
                 if (
                     t["truncated"]
@@ -433,7 +450,8 @@ def main() -> None:
                 new_in_page += 1
 
             log(f"page {page_num}: parsed {len(page_tweets)}, "
-                f"+{new_in_page} new (total {len(seen)})")
+                f"+{new_in_page} new, {page_video_skipped} video skipped "
+                f"(total {len(seen)})")
 
             page_files.append({
                 "page": page_num,
@@ -480,6 +498,7 @@ def main() -> None:
         "args": vars(args) | {"output_root": str(args.output_root)},
         "pages_captured": page_num,
         "tweets_captured": len(seen),
+        "video_tweets_skipped": video_skipped,
         "expansion_attempts": expansion_attempts,
         "expansion_successes": expansion_successes,
         "elapsed_seconds": round(elapsed_total, 1),
@@ -489,6 +508,7 @@ def main() -> None:
     atomic_write_json(manifest_path, manifest)
     log(
         f"done: {len(seen)} tweets, {page_num} pages, "
+        f"{video_skipped} video skipped, "
         f"expand {expansion_successes}/{expansion_attempts}, "
         f"{elapsed_total:.0f}s -> {manifest_path}"
     )
