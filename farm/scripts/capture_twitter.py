@@ -361,9 +361,10 @@ def parse_args() -> argparse.Namespace:
                    help="Skip launching X (assume already foreground).")
     p.add_argument("--keep-pages", action="store_true",
                    help="Keep per-page screenshots + UI dumps (default: only first + last).")
-    p.add_argument("--include-video", action="store_true",
-                   help="Include video tweets in output (default: skip them; videos "
-                        "belong on the TikTok pipeline).")
+    p.add_argument("--skip-video", action="store_true",
+                   help="Exclude tweets that embed video from output. Default is "
+                        "to include them; downstream can filter on the has_video "
+                        "field if needed.")
     return p.parse_args()
 
 
@@ -432,7 +433,7 @@ def main() -> None:
             for t in page_tweets:
                 if t["id"] in seen:
                     continue
-                if t["has_video"] and not args.include_video:
+                if t["has_video"] and args.skip_video:
                     video_skipped += 1
                     page_video_skipped += 1
                     continue
