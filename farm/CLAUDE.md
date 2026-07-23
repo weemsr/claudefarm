@@ -306,39 +306,71 @@ queue, writes artifacts to disk + DB, enqueues the next stage.
 
 # Current State
 
-**TODO: fill this in.** Example entries:
+*Last updated: 2026-07-23 (branch claude/android-pixel-testing-Pi42M)*
 
-- \[x\] uiautomator2 TikTok “For You” scroll + video download
-  implemented
+## Hardware / devices
 
-- \[ \] Twitter timeline capture in progress
+- \[x\] **Device 1: Pixel 6** (eBay, unlocked), serial `1B271FDF6003AY`,
+  Android 16. ADB authorized, scrcpy verified,
+  `fastboot flashing get_unlock_ability` returns **1** (Magisk path open,
+  not yet flashed). Role: **twitter**.
+- \[x\] Host (interim): **M3 MacBook Air, 16 GB RAM** — NOT the final Mac
+  Mini. `adb` + `scrcpy` installed via Homebrew. No external SSD yet;
+  captures go to `~/farm_data/` on internal disk. Use `caffeinate -dimsu`
+  during runs — laptop sleep kills captures.
+- \[x\] X installed on device under throwaway account
+  (`@ecoprofchan209`), battery-optimization whitelisted
+  (`dumpsys deviceidle whitelist +com.twitter.android`).
+- \[ \] No proxy yet — home WAN IP. Fine for short test runs only.
+- \[ \] Phones 2–3 not purchased.
 
-- \[ \] No preprocessing pipeline yet
+## Capture — Twitter (working)
 
-- \[ \] DB schema not finalized
+- \[x\] `scripts/capture_twitter.py` — stdlib-only scrolling timeline
+  scraper, tested end-to-end on-device. Last run: 16 tweets / 9 pages /
+  163 s, **7/7 show-more expansions succeeded** (prefix_match).
+  Features: humanlike jittered scrolls + pauses, cross-page dedup by
+  content hash, show-more expansion via detail-view drilldown,
+  `has_video` flag (videos included by default, `--skip-video` to
+  exclude), atomic JSON writes, debug XML dumps on expansion failure.
+- Key selectors (X app, July 2026): timeline list `android:id/list`;
+  per-tweet `…:id/outer_layout_row_view_tweet`; metadata serialized in
+  `…:id/row` content-desc; timeline body `…:id/tweet_content_text`;
+  detail body `…:id/tweet_text` (often empty text attr on media tweets —
+  hence prefix-match extraction). Selectors break on app updates; check
+  `debug/expand_fail_*.xml` dumps first.
+- Suggested production invocation:
+  `python3 scripts/capture_twitter.py --output-root ~/farm_data/raw/twitter --max-tweets 200 --max-pages 60 --max-seconds 1800 --expand-rate 0.5`
 
-- \[ \] Running on a single Pixel 3a for testing; 2 more phones on order
+## Not started
+
+- \[ \] TikTok capture (device 1 is Twitter; needs phone 2 or role swap)
+- \[ \] Preprocess / enrich / synthesize services, Redis+RQ, DuckDB
+- \[ \] `.env.example`, pydantic models, tests
+- \[ \] Migration of capture script into `farm/capture/` package
 
 # Immediate Next Steps
 
-9.  Finalize capture output schema (pydantic models for TikTok + Twitter
-    records).
+1.  Follow 10–20 text-heavy accounts from the throwaway — For You is
+    video-dominated with an empty follow graph.
 
-10. Stand up the preprocessing service: Whisper + PaddleOCR + ffmpeg
-    workers watching raw/ for new files.
+2.  Move `capture_twitter.py` logic into `farm/capture/twitter.py` with
+    pydantic record models; keep the script as a thin CLI wrapper.
 
-11. Define DuckDB schema for enriched records; write a migration runner.
+3.  Define DuckDB schema; ingest existing `*_run.json` files as backfill.
 
-12. Wire Redis + RQ queue between capture → preprocess → enrich.
+4.  launchd plist for scheduled capture runs (wrap with `caffeinate`).
 
-13. Implement MiniMax M2.7 client with automatic caching and
-    retry/backoff.
+5.  Add Drony + residential proxy before any multi-hour sustained runs.
 
-14. Build per-device health-check loop with USB port cycling.
+6.  Stand up preprocessing service when TikTok capture starts (Whisper +
+    PaddleOCR + ffmpeg watching raw/).
 
-15. Write the rsync backup script; schedule via cron/launchd.
+7.  Wire Redis + RQ between capture → preprocess → enrich.
 
-16. Add structured logging across all services with run IDs.
+8.  Implement MiniMax M2.7 client with caching + retry/backoff.
+
+9.  Per-device health-check loop; rsync backup script.
 
 # Context to Ask Me About
 
